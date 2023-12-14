@@ -55,15 +55,19 @@ func (b *ByteSize) Set(s string) error {
 func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body io.Reader) bool {
 	// Convert MaxFileSize from string to int64
 	var maxSize ByteSize
-	err := maxSize.Set(ctx.Config.App.MaxFileSize)
-	if err != nil {
-		ctx.Logger.Printf("Error parsing max file size: %v", err)
-		return false
-	}
-	// Don't scan if the content length is too large
-	if req.ContentLength > int64(maxSize) {
-		ctx.Logger.Printf("Not scanning file larger than %s", ctx.Config.App.MaxFileSize)
-		return false
+	if ctx.Config.App.MaxFileSize != "" {
+		err := maxSize.Set(ctx.Config.App.MaxFileSize)
+		if err != nil {
+			ctx.Logger.Printf("Error parsing max file size: %v", err)
+			http.Error(w, "Bad Request", 400)
+			// Return true to indicate an error condition
+			return true
+		}
+		// Don't scan if the content length is too large
+		if req.ContentLength > int64(maxSize) {
+			ctx.Logger.Printf("Not scanning file larger than %s", ctx.Config.App.MaxFileSize)
+			return false
+		}
 	}
 
 	//
