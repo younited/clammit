@@ -93,6 +93,7 @@ var DefaultApplicationConfig = ApplicationConfig{
 	TestPages:              true,
 	Debug:                  false,
 	NumThreads:             runtime.NumCPU(),
+	MaxFileSize:            "25MB",
 }
 
 // Application context
