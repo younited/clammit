@@ -123,7 +123,7 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 				if ctx.Config.App.Debug {
 					ctx.Logger.Println("Scanning", part.FileName())
 				}
-				if responded := c.respondOnVirus(w, filename, part); responded == true {
+				if responded := c.respondOnVirus(w, filename, part); responded {
 					return true
 				}
 			}

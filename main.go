@@ -221,13 +221,13 @@ func startLogging() {
  * HTTP listener.
  */
 func beGraceful() {
-	sigchan := make(chan os.Signal)
+	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		activity := 0
 		for {
 			select {
-			case _ = <-sigchan:
+			case <-sigchan:
 				ctx.Logger.Println("Received termination signal")
 				ctx.ShuttingDown = true
 				for activity > 0 {
@@ -265,14 +265,14 @@ func checkURL(urlString string) *url.URL {
  */
 func getListener(address string, socketPerms int) (listener net.Listener, err error) {
 	if address == "" {
-		return nil, fmt.Errorf("No listen address specified")
+		return nil, fmt.Errorf("no listen address specified")
 	}
 	if idx := strings.Index(address, ":"); idx >= 0 {
 		scheme := address[0:idx]
 		switch scheme {
 		case "tcp", "tcp4":
 			path := address[idx+1:]
-			if strings.Index(path, ":") == -1 {
+			if !strings.Contains(path, ":") {
 				path = ":" + path
 			}
 			listener, err = net.Listen(scheme, path)
