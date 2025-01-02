@@ -319,18 +319,19 @@ func updateMetrics(duration time.Duration, failed bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	metrics.DurationOfVirusScanning += duration
+	metrics.TotalFilesScanned++
 	if failed {
 		metrics.FilesFailedToProcess++
 	}
-	metrics.TotalFilesScanned++
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	defer mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	metrics.DurationOfVirusScanning = metrics.DurationOfVirusScanning / time.Second
-	json.NewEncoder(w).Encode(metrics)
+	metricsCopy := metrics
+	metricsCopy.DurationOfVirusScanning = metrics.DurationOfVirusScanning / time.Millisecond
+	json.NewEncoder(w).Encode(metricsCopy)
 }
 
 /*
@@ -348,9 +349,7 @@ func scanHandler(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 	failed := false
 
-	if !ctx.ScanInterceptor.Handle(w, req, req.Body) {
-		w.Write([]byte("No virus found"))
-	} else {
+	if ctx.ScanInterceptor.Handle(w, req, req.Body) {
 		failed = true
 	}
 
