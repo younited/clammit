@@ -329,6 +329,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	defer mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	metrics.DurationOfVirusScanning = metrics.DurationOfVirusScanning / time.Second
 	json.NewEncoder(w).Encode(metrics)
 }
 
