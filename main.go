@@ -21,7 +21,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"gopkg.in/gcfg.v1"
 )
@@ -118,6 +120,18 @@ type Info struct {
 	TestScanCleanResult string `json:"test_scan_clean"`
 }
 
+// Metrics struct to hold the metrics data
+type Metrics struct {
+	DurationOfVirusScanning time.Duration `json:"duration_of_virus_scanning"`
+	FilesFailedToProcess    int           `json:"files_failed_to_process"`
+	TotalFilesScanned       int           `json:"total_files_scanned"`
+}
+
+var (
+	metrics Metrics
+	mu      sync.Mutex
+)
+
 // Global variables and config
 var ctx *Ctx
 var configFile string
@@ -125,6 +139,7 @@ var EICAR = []byte(`X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FI
 
 func init() {
 	flag.StringVar(&configFile, "config", "", "Configuration file")
+	metrics = Metrics{}
 }
 
 func main() {
@@ -181,6 +196,8 @@ func main() {
 	router.HandleFunc("/clammit", infoHandler)
 	router.HandleFunc("/clammit/scan", scanHandler)
 	router.HandleFunc("/clammit/readyz", readyzHandler)
+	// Register the /clammit/metrics endpoint
+	router.HandleFunc("/clammit/metrics", metricsHandler)
 
 	if ctx.Config.App.TestPages {
 		fs := http.FileServer(http.Dir("testfiles"))
@@ -298,6 +315,23 @@ func getListener(address string, socketPerms int) (listener net.Listener, err er
 	return listener, err
 }
 
+func updateMetrics(duration time.Duration, failed bool) {
+	mu.Lock()
+	defer mu.Unlock()
+	metrics.DurationOfVirusScanning += duration
+	if failed {
+		metrics.FilesFailedToProcess++
+	}
+	metrics.TotalFilesScanned++
+}
+
+func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	mu.Lock()
+	defer mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
 /*
  * Handler for /scan
  *
@@ -310,9 +344,17 @@ func scanHandler(w http.ResponseWriter, req *http.Request) {
 	ctx.ActivityChan <- 1
 	defer func() { ctx.ActivityChan <- -1 }()
 
+	start := time.Now()
+	failed := false
+
 	if !ctx.ScanInterceptor.Handle(w, req, req.Body) {
 		w.Write([]byte("No virus found"))
+	} else {
+		failed = true
 	}
+
+	duration := time.Since(start)
+	updateMetrics(duration, failed)
 }
 
 /*
@@ -327,9 +369,15 @@ func scanForwardHandler(w http.ResponseWriter, req *http.Request) {
 	ctx.ActivityChan <- 1
 	defer func() { ctx.ActivityChan <- -1 }()
 
+	start := time.Now()
+	failed := false
+
 	fw := forwarder.NewForwarder(ctx.ApplicationURL, ctx.Config.App.ContentMemoryThreshold, ctx.ScanInterceptor)
 	fw.SetLogger(ctx.Logger, ctx.Config.App.Debug)
 	fw.HandleRequest(w, req)
+
+	duration := time.Since(start)
+	updateMetrics(duration, failed)
 }
 
 /*
@@ -391,8 +439,8 @@ func infoHandler(w http.ResponseWriter, req *http.Request) {
  */
 func readyzHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
-		w.WriteHeader(503)
+		w.WriteHeader(http.StatusServiceUnavailable)
 	} else {
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
 	}
 }
