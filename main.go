@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"clammit/forwarder"
+	"clammit/metrics"
 	"clammit/scanner"
 	"encoding/json"
 	"flag"
@@ -21,7 +22,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -120,18 +120,6 @@ type Info struct {
 	TestScanCleanResult string `json:"test_scan_clean"`
 }
 
-// Metrics struct to hold the metrics data
-type Metrics struct {
-	DurationOfVirusScanning time.Duration `json:"duration_of_virus_scanning"`
-	FilesFailedToProcess    int           `json:"files_failed_to_process"`
-	TotalFilesScanned       int           `json:"total_files_scanned"`
-}
-
-var (
-	metrics Metrics
-	mu      sync.Mutex
-)
-
 // Global variables and config
 var ctx *Ctx
 var configFile string
@@ -139,7 +127,6 @@ var EICAR = []byte(`X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FI
 
 func init() {
 	flag.StringVar(&configFile, "config", "", "Configuration file")
-	metrics = Metrics{}
 }
 
 func main() {
@@ -197,7 +184,7 @@ func main() {
 	router.HandleFunc("/clammit/scan", scanHandler)
 	router.HandleFunc("/clammit/readyz", readyzHandler)
 	// Register the /clammit/metrics endpoint
-	router.HandleFunc("/clammit/metrics", metricsHandler)
+	router.HandleFunc("/clammit/metrics", metrics.MetricsHandler)
 
 	if ctx.Config.App.TestPages {
 		fs := http.FileServer(http.Dir("testfiles"))
@@ -238,7 +225,7 @@ func startLogging() {
  * HTTP listener.
  */
 func beGraceful() {
-	sigchan := make(chan os.Signal)
+	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		activity := 0
@@ -315,25 +302,6 @@ func getListener(address string, socketPerms int) (listener net.Listener, err er
 	return listener, err
 }
 
-func updateMetrics(duration time.Duration, failed bool) {
-	mu.Lock()
-	defer mu.Unlock()
-	metrics.DurationOfVirusScanning += duration
-	metrics.TotalFilesScanned++
-	if failed {
-		metrics.FilesFailedToProcess++
-	}
-}
-
-func metricsHandler(w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	defer mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
-	metricsCopy := metrics
-	metricsCopy.DurationOfVirusScanning = metrics.DurationOfVirusScanning / time.Millisecond
-	json.NewEncoder(w).Encode(metricsCopy)
-}
-
 /*
  * Handler for /scan
  *
@@ -354,7 +322,7 @@ func scanHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	duration := time.Since(start)
-	updateMetrics(duration, failed)
+	metrics.UpdateMetrics(duration, failed)
 }
 
 /*
@@ -377,7 +345,7 @@ func scanForwardHandler(w http.ResponseWriter, req *http.Request) {
 	fw.HandleRequest(w, req)
 
 	duration := time.Since(start)
-	updateMetrics(duration, failed)
+	metrics.UpdateMetrics(duration, failed)
 }
 
 /*
