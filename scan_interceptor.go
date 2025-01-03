@@ -81,7 +81,7 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 		return false
 	}
 
-	ctx.Logger.Printf("New request %s %s len %d from %s (%s)\n", req.Method, req.URL.Path, req.ContentLength, req.RemoteAddr, req.Header.Get("X-Forwarded-For"))
+	ctx.Logger.Printf("New request %s %s with size %d bytes (%.2fMB) from %s (%s)\n", req.Method, req.URL.Path, req.ContentLength, float64(req.ContentLength)/1e6, req.RemoteAddr, req.Header.Get("X-Forwarded-For"))
 
 	//
 	// Find any attachments
