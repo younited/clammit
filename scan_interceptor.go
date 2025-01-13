@@ -21,6 +21,7 @@ import (
 type ScanInterceptor struct {
 	VirusStatusCode int
 	Scanner         scanner.Scanner
+	FileCount       int
 }
 
 type ByteSize int64
@@ -53,6 +54,9 @@ func (b *ByteSize) Set(s string) error {
  * returns True if the body contains a virus
  */
 func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body io.Reader) bool {
+	// Reset the file count for each request
+	c.FileCount = 0
+
 	// Convert MaxFileSize from string to int64
 	var maxSize ByteSize
 	if ctx.Config.App.MaxFileSize != "" {
@@ -70,10 +74,8 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 		}
 	}
 
-	//
 	// Don't care unless we have some content. When the length is unknown, the length will be -1,
 	// but we attempt anyway to read the body.
-	//
 	if req.ContentLength == 0 {
 		if ctx.Config.App.Debug {
 			ctx.Logger.Println("Not handling request with zero length")
@@ -83,9 +85,7 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 
 	ctx.Logger.Printf("New request %s %s with size %d bytes (%.2fMB) from %s (%s)\n", req.Method, req.URL.Path, req.ContentLength, float64(req.ContentLength)/1e6, req.RemoteAddr, req.Header.Get("X-Forwarded-For"))
 
-	//
 	// Find any attachments
-	//
 	contentType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	if err != nil {
 		ctx.Logger.Println("Unable to parse media type:", err)
@@ -101,43 +101,48 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 
 		reader := multipart.NewReader(body, boundary)
 
-		//
 		// Scan them
-		//
 		count := 0
 		for {
-			if part, err := reader.NextPart(); err != nil {
+			part, err := reader.NextPart()
+			if err != nil {
 				if err == io.EOF {
 					break // all done
 				}
 				ctx.Logger.Println("Error parsing multipart form:", err)
 				http.Error(w, "Bad Request", 400)
 				return true
-			} else {
-				count++
-				filename := part.FileName()
-				if filename == "" {
-					filename = "untitled"
-				}
-				defer part.Close()
-				if ctx.Config.App.Debug {
-					ctx.Logger.Println("Scanning", part.FileName())
-				}
-				if responded := c.respondOnVirus(w, filename, part); responded == true {
-					return true
-				}
+			}
+			defer part.Close()
+			count++
+			filename := part.FileName()
+			if filename == "" {
+				filename = "untitled"
+			}
+			if ctx.Config.App.Debug {
+				ctx.Logger.Println("Scanning", filename)
+			}
+			if responded := c.respondOnVirus(w, filename, part); responded == true {
+				return true
 			}
 		}
 		if ctx.Config.App.Debug {
 			ctx.Logger.Printf("Processed %d form parts", count)
 		}
+		c.FileCount++ // Increment the file count once for the entire multipart request
 	} else {
 		filename := "untitled"
 		_, params, err := mime.ParseMediaType(req.Header.Get("Content-Disposition"))
 		if err == nil {
 			filename = params["filename"]
 		}
-		return c.respondOnVirus(w, filename, body)
+		if ctx.Config.App.Debug {
+			ctx.Logger.Println("Scanning non-multipart file", filename)
+		}
+		if c.respondOnVirus(w, filename, body) {
+			return true
+		}
+		c.FileCount++ // Increment the file count for the non-multipart file
 	}
 	return false
 }

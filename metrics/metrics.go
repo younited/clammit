@@ -18,11 +18,11 @@ var (
 	mu      sync.Mutex
 )
 
-func UpdateMetrics(duration time.Duration, failed bool) {
+func UpdateMetrics(duration time.Duration, failed bool, fileCount int) {
 	mu.Lock()
 	defer mu.Unlock()
 	metrics.DurationOfVirusScanning += duration
-	metrics.TotalFilesScanned++
+	metrics.TotalFilesScanned += fileCount
 	if failed {
 		metrics.FilesFailedToProcess++
 	}
