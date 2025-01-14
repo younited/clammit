@@ -47,11 +47,11 @@ func (b *ByteSize) Set(s string) error {
 }
 
 /*
- * Interceptor implementation
- *
- * Runs a multi-part parser across the request body and sends all file contents to Scanner
- *
- * returns True if the body contains a virus
+* Interceptor implementation
+*
+* Runs a multi-part parser across the request body and sends all file contents to Scanner
+*
+* returns True if the body contains a virus
  */
 func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body io.Reader) bool {
 	// Reset the file count for each request
@@ -102,7 +102,6 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 		reader := multipart.NewReader(body, boundary)
 
 		// Scan them
-		count := 0
 		for {
 			part, err := reader.NextPart()
 			if err != nil {
@@ -114,7 +113,6 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 				return true
 			}
 			defer part.Close()
-			count++
 			filename := part.FileName()
 			if filename == "" {
 				filename = "untitled"
@@ -127,9 +125,9 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 			}
 		}
 		if ctx.Config.App.Debug {
-			ctx.Logger.Printf("Processed %d form parts", count)
+			ctx.Logger.Printf("Processed multipart form")
 		}
-		c.FileCount++ // Increment the file count once for the entire multipart request
+		c.FileCount = 1 // Increment the file count once for the entire multipart request
 	} else {
 		filename := "untitled"
 		_, params, err := mime.ParseMediaType(req.Header.Get("Content-Disposition"))
@@ -142,17 +140,18 @@ func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body 
 		if c.respondOnVirus(w, filename, body) {
 			return true
 		}
-		c.FileCount++ // Increment the file count for the non-multipart file
+		c.FileCount = 1 // Increment the file count for the non-multipart file
 	}
 	return false
 }
 
 /*
- * This function performs the virus scan and handles the http response in case of a virus.
- *
- * returns True if a virus has been found and a http error response has been written
+* This function performs the virus scan and handles the http response in case of a virus.
+*
+* returns True if a virus has been found and a http error response has been written
  */
 func (c *ScanInterceptor) respondOnVirus(w http.ResponseWriter, filename string, reader io.Reader) bool {
+	c.FileCount = 1 // Increment the file count for each file scanned
 	if hasVirus, err := c.Scanner.HasVirus(reader); err != nil {
 		ctx.Logger.Printf("Unable to scan file (%s): %v\n", filename, err)
 		http.Error(w, "Internal Server Error", 500)

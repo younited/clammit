@@ -346,9 +346,6 @@ func scanForwardHandler(w http.ResponseWriter, req *http.Request) {
 
 	duration := time.Since(start)
 	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount)
-
-	// Log the number of files scanned
-	ctx.Logger.Printf("Total files scanned: %d", ctx.ScanInterceptor.FileCount)
 }
 
 /*
