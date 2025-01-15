@@ -1,30 +1,48 @@
 package metrics
 
 import (
-	"encoding/json"
-	"net/http"
-	"sort"
+	"log"
 	"sync"
 	"time"
+
+	"github.com/DataDog/datadog-go/v5/statsd"
 )
 
 type Metrics struct {
-	DurationOfVirusScanningAverage time.Duration `json:"duration_of_virus_scanning_average"`
-	DurationOfVirusScanningMedian  time.Duration `json:"duration_of_virus_scanning_median"`
-	DurationOfVirusScanningP95     time.Duration `json:"duration_of_virus_scanning_p95"`
-	DurationOfVirusScanningMax     time.Duration `json:"duration_of_virus_scanning_max"`
-	FilesFailedToProcess           int           `json:"files_failed_to_process"`
-	TotalFilesScanned              int           `json:"total_files_scanned"`
-	TotalVirusesFound              int           `json:"total_viruses_found"`
+	FilesFailedToProcess int `json:"files_failed_to_process"`
+	TotalFilesScanned    int `json:"total_files_scanned"`
+	TotalVirusesFound    int `json:"total_viruses_found"`
 }
 
 var (
-	metrics   Metrics
-	mu        sync.Mutex
-	durations []time.Duration
+	metrics      Metrics
+	mu           sync.Mutex
+	durations    []time.Duration
+	statsdClient *statsd.Client
 )
 
-func UpdateMetrics(duration time.Duration, failed bool, fileCount int, virusesFound int) {
+func InitStatsdClient(address, namespace string, log *log.Logger) {
+	if address == "" {
+		log.Println("StatsD address not provided, skipping initialization")
+		return
+	}
+	var err error
+	statsdClient, err = statsd.New(address, statsd.WithNamespace(namespace))
+	if err != nil {
+		log.Println("Failed to initialize StatsD client:", err)
+		return
+	}
+	log.Println("StatsD client initialized successfully")
+}
+
+func CloseStatsdClient(log *log.Logger) {
+	if statsdClient != nil {
+		statsdClient.Close()
+		log.Println("StatsD client closed successfully")
+	}
+}
+
+func UpdateMetrics(duration time.Duration, failed bool, fileCount int, virusesFound int, log *log.Logger) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -42,67 +60,16 @@ func UpdateMetrics(duration time.Duration, failed bool, fileCount int, virusesFo
 	if failed {
 		metrics.FilesFailedToProcess++
 	}
-	updateDurationMetrics()
+	sendMetricsToDatadog(duration, fileCount, virusesFound, log)
 }
 
-func updateDurationMetrics() {
-	if len(durations) == 0 {
+func sendMetricsToDatadog(duration time.Duration, fileCount int, virusesFound int, log *log.Logger) {
+	if statsdClient == nil {
+		log.Println("StatsD client not initialized, skipping metrics sending")
 		return
 	}
-
-	sort.Slice(durations, func(i, j int) bool {
-		return durations[i] < durations[j]
-	})
-
-	totalDuration := time.Duration(0)
-	for _, d := range durations {
-		totalDuration += d
-	}
-
-	metrics.DurationOfVirusScanningAverage = totalDuration / time.Duration(len(durations))
-	metrics.DurationOfVirusScanningMedian = calcMedian(durations)
-	metrics.DurationOfVirusScanningMax = durations[len(durations)-1]
-	metrics.DurationOfVirusScanningP95 = calcP95(durations)
-}
-
-func calcMedian(durations []time.Duration) time.Duration {
-	n := len(durations)
-	if n == 0 {
-		return 0
-	}
-
-	sort.Slice(durations, func(i, j int) bool {
-		return durations[i] < durations[j]
-	})
-
-	middle := n / 2
-	if n%2 == 0 {
-		return (durations[middle-1] + durations[middle]) / 2
-	}
-	return durations[middle]
-}
-
-func calcP95(durations []time.Duration) time.Duration {
-	n := len(durations)
-	if n == 0 {
-		return 0
-	}
-
-	index := int(float64(n) * 0.95)
-	if index >= n {
-		index = n - 1
-	}
-	return durations[index]
-}
-
-func MetricsHandler(w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	defer mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
-	metricsCopy := metrics
-	metricsCopy.DurationOfVirusScanningAverage = metrics.DurationOfVirusScanningAverage / time.Millisecond
-	metricsCopy.DurationOfVirusScanningMedian = metrics.DurationOfVirusScanningMedian / time.Millisecond
-	metricsCopy.DurationOfVirusScanningP95 = metrics.DurationOfVirusScanningP95 / time.Millisecond
-	metricsCopy.DurationOfVirusScanningMax = metrics.DurationOfVirusScanningMax / time.Millisecond
-	json.NewEncoder(w).Encode(metricsCopy)
+	statsdClient.Histogram("scan.response_time", float64(duration/time.Millisecond), nil, 1)
+	statsdClient.Count("scan.failed", int64(metrics.FilesFailedToProcess), nil, 1)
+	statsdClient.Count("scan.processed", int64(fileCount), nil, 1)
+	statsdClient.Count("scan.viruses_found", int64(virusesFound), nil, 1)
 }

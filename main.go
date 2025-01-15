@@ -29,7 +29,7 @@ import (
 )
 
 /* This is for Go Releaser.
-* https://github.com/goreleaser/goreleaser#a-note-about-mainversion
+ * https://github.com/goreleaser/goreleaser#a-note-about-mainversion
  */
 var version = "master"
 
@@ -81,6 +81,10 @@ type ApplicationConfig struct {
 	NumThreads int `gcfg:"num-threads"`
 	// Maximum file size to scan
 	MaxFileSize string `gcfg:"max-file-size"`
+	// StatsD address
+	StatsdAddress string `gcfg:"statsd-address"`
+	// StatsD namespace
+	StatsdNamespace string `gcfg:"statsd-namespace"`
 }
 
 // Default configuration
@@ -96,6 +100,8 @@ var DefaultApplicationConfig = ApplicationConfig{
 	Debug:                  false,
 	NumThreads:             runtime.NumCPU(),
 	MaxFileSize:            "25MB",
+	StatsdAddress:          "",
+	StatsdNamespace:        "clammit",
 }
 
 // Application context
@@ -137,7 +143,7 @@ func init() {
 
 func main() {
 	/*
-	* Construct configuration, set up logging
+	 * Construct configuration, set up logging
 	 */
 	flag.Parse()
 	ctx = &Ctx{
@@ -151,23 +157,32 @@ func main() {
 		log.Fatalf("Configuration read failure: %s", err.Error())
 	}
 
+	// Initialize logging
+	startLogging()
+
+	// Ensure StatsD namespace ends with a dot
+	if !strings.HasSuffix(ctx.Config.App.StatsdNamespace, ".") {
+		ctx.Config.App.StatsdNamespace += "."
+	}
+
+	// Initialize the StatsD client with user-configured values
+	metrics.InitStatsdClient(ctx.Config.App.StatsdAddress, ctx.Config.App.StatsdNamespace, ctx.Logger)
+
 	// Socket perms are octal!
 	socketPerms := 0777
 	if ctx.Config.App.SocketPerms != "" {
 		if sp, err := strconv.ParseInt(ctx.Config.App.SocketPerms, 8, 0); err == nil {
 			socketPerms = int(sp)
 		} else {
-			log.Fatalf("SocketPerms invalid (expected 4-digit octal: %s", err.Error())
+			ctx.Logger.Fatalf("SocketPerms invalid (expected 4-digit octal: %s", err.Error())
 		}
 	}
 
 	// Allow multi-proc
 	runtime.GOMAXPROCS(ctx.Config.App.NumThreads)
 
-	startLogging()
-
 	/*
-	* Construct objects, validate the URLs
+	 * Construct objects, validate the URLs
 	 */
 	ctx.ApplicationURL = checkURL(ctx.Config.App.ApplicationURL)
 	checkURL(ctx.Config.App.ClamdURL)
@@ -182,15 +197,13 @@ func main() {
 	}
 
 	/*
-	* Set up the HTTP server
+	 * Set up the HTTP server
 	 */
 	router := http.NewServeMux()
 
 	router.HandleFunc("/clammit", infoHandler)
 	router.HandleFunc("/clammit/scan", scanHandler)
 	router.HandleFunc("/clammit/readyz", readyzHandler)
-	// Register the /clammit/metrics endpoint
-	router.HandleFunc("/clammit/metrics", metrics.MetricsHandler)
 
 	if ctx.Config.App.TestPages {
 		fs := http.FileServer(http.Dir("testfiles"))
@@ -209,7 +222,7 @@ func main() {
 }
 
 /*
-* Starts logging
+ * Starts logging
  */
 func startLogging() {
 	if ctx.Config.App.Logfile != "" {
@@ -226,9 +239,9 @@ func startLogging() {
 }
 
 /*
-* Handles graceful shutdown. Sets ctx.ShuttingDown = true to stop any new
-* requests, then waits for active requests to complete before closing the
-* HTTP listener.
+ * Handles graceful shutdown. Sets ctx.ShuttingDown = true to stop any new
+ * requests, then waits for active requests to complete before closing the
+ * HTTP listener.
  */
 func beGraceful() {
 	sigchan := make(chan os.Signal, 1)
@@ -245,6 +258,8 @@ func beGraceful() {
 					i := <-ctx.ActivityChan
 					activity += i
 				}
+				// Close the StatsD client
+				metrics.CloseStatsdClient(ctx.Logger)
 				// This will cause main() to continue from http.Serve()
 				// it will also clean up the unix socket (if relevant)
 				ctx.Listener.Close()
@@ -256,7 +271,7 @@ func beGraceful() {
 }
 
 /*
-* Validates the URL is OK (fatal error if not) and returns it
+ * Validates the URL is OK (fatal error if not) and returns it
  */
 func checkURL(urlString string) *url.URL {
 	parsedURL, err := url.Parse(urlString)
@@ -267,11 +282,11 @@ func checkURL(urlString string) *url.URL {
 }
 
 /*
-* Returns a TCP or Unix socket listener, according to the scheme prefix:
-*
-*   unix:/tmp/foo.sock
-*   tcp::8438
-*   :8438                 - tcp listener
+ * Returns a TCP or Unix socket listener, according to the scheme prefix:
+ *
+ *   unix:/tmp/foo.sock
+ *   tcp::8438
+ *   :8438                 - tcp listener
  */
 func getListener(address string, socketPerms int) (listener net.Listener, err error) {
 	if address == "" {
@@ -309,9 +324,9 @@ func getListener(address string, socketPerms int) (listener net.Listener, err er
 }
 
 /*
-* Handler for /scan
-*
-* Virus checks file and sends response
+ * Handler for /scan
+ *
+ * Virus checks file and sends response
  */
 func scanHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
@@ -332,13 +347,13 @@ func scanHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount, virusesFound)
+	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount, virusesFound, ctx.Logger)
 }
 
 /*
-* Handler for scan & forward
-*
-* Constructs a forwarder and calls it
+ * Handler for scan & forward
+ *
+ * Constructs a forwarder and calls it
  */
 func scanForwardHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
@@ -365,7 +380,7 @@ func scanForwardHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	duration := time.Since(start)
-	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount, virusesFound)
+	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount, virusesFound, ctx.Logger)
 }
 
 // responseRecorder is a wrapper to capture the status code written to the ResponseWriter
@@ -375,10 +390,10 @@ func (rec *responseRecorder) WriteHeader(code int) {
 }
 
 /*
-* Handler for /info
-*
-* Validates the Scanner connection
-* Emits the information as a JSON response
+ * Handler for /info
+ *
+ * Validates the Scanner connection
+ * Emits the information as a JSON response
  */
 func infoHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
@@ -426,10 +441,10 @@ func infoHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 /*
-* Handler for /clammit/readyz
-*
-* Returns 200 OK unless we are shutting down. Used in k8s.
-* See https://github.com/ifad/clammit/issues/23
+ * Handler for /clammit/readyz
+ *
+ * Returns 200 OK unless we are shutting down. Used in k8s.
+ * See https://github.com/ifad/clammit/issues/23
  */
 func readyzHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
