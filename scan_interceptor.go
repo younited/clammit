@@ -22,6 +22,7 @@ type ScanInterceptor struct {
 	VirusStatusCode int
 	Scanner         scanner.Scanner
 	FileCount       int
+	VirusesFound    int
 }
 
 type ByteSize int64
@@ -54,8 +55,9 @@ func (b *ByteSize) Set(s string) error {
 * returns True if the body contains a virus
  */
 func (c *ScanInterceptor) Handle(w http.ResponseWriter, req *http.Request, body io.Reader) bool {
-	// Reset the file count for each request
+	// Reset the file count and viruses found for each request
 	c.FileCount = 0
+	c.VirusesFound = 0
 
 	// Convert MaxFileSize from string to int64
 	var maxSize ByteSize
@@ -157,6 +159,7 @@ func (c *ScanInterceptor) respondOnVirus(w http.ResponseWriter, filename string,
 		http.Error(w, "Internal Server Error", 500)
 		return true
 	} else if hasVirus {
+		c.VirusesFound = 1
 		w.WriteHeader(c.VirusStatusCode)
 		w.Write([]byte(fmt.Sprintf("File %s has a virus!", filename)))
 		return true

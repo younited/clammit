@@ -29,7 +29,7 @@ import (
 )
 
 /* This is for Go Releaser.
- * https://github.com/goreleaser/goreleaser#a-note-about-mainversion
+* https://github.com/goreleaser/goreleaser#a-note-about-mainversion
  */
 var version = "master"
 
@@ -120,6 +120,12 @@ type Info struct {
 	TestScanCleanResult string `json:"test_scan_clean"`
 }
 
+// Response recorder to capture the status code
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
 // Global variables and config
 var ctx *Ctx
 var configFile string
@@ -131,7 +137,7 @@ func init() {
 
 func main() {
 	/*
-	 * Construct configuration, set up logging
+	* Construct configuration, set up logging
 	 */
 	flag.Parse()
 	ctx = &Ctx{
@@ -161,7 +167,7 @@ func main() {
 	startLogging()
 
 	/*
-	 * Construct objects, validate the URLs
+	* Construct objects, validate the URLs
 	 */
 	ctx.ApplicationURL = checkURL(ctx.Config.App.ApplicationURL)
 	checkURL(ctx.Config.App.ClamdURL)
@@ -176,7 +182,7 @@ func main() {
 	}
 
 	/*
-	 * Set up the HTTP server
+	* Set up the HTTP server
 	 */
 	router := http.NewServeMux()
 
@@ -203,7 +209,7 @@ func main() {
 }
 
 /*
- * Starts logging
+* Starts logging
  */
 func startLogging() {
 	if ctx.Config.App.Logfile != "" {
@@ -220,9 +226,9 @@ func startLogging() {
 }
 
 /*
- * Handles graceful shutdown. Sets ctx.ShuttingDown = true to stop any new
- * requests, then waits for active requests to complete before closing the
- * HTTP listener.
+* Handles graceful shutdown. Sets ctx.ShuttingDown = true to stop any new
+* requests, then waits for active requests to complete before closing the
+* HTTP listener.
  */
 func beGraceful() {
 	sigchan := make(chan os.Signal, 1)
@@ -250,7 +256,7 @@ func beGraceful() {
 }
 
 /*
- * Validates the URL is OK (fatal error if not) and returns it
+* Validates the URL is OK (fatal error if not) and returns it
  */
 func checkURL(urlString string) *url.URL {
 	parsedURL, err := url.Parse(urlString)
@@ -261,11 +267,11 @@ func checkURL(urlString string) *url.URL {
 }
 
 /*
- * Returns a TCP or Unix socket listener, according to the scheme prefix:
- *
- *   unix:/tmp/foo.sock
- *   tcp::8438
- *   :8438                 - tcp listener
+* Returns a TCP or Unix socket listener, according to the scheme prefix:
+*
+*   unix:/tmp/foo.sock
+*   tcp::8438
+*   :8438                 - tcp listener
  */
 func getListener(address string, socketPerms int) (listener net.Listener, err error) {
 	if address == "" {
@@ -303,9 +309,9 @@ func getListener(address string, socketPerms int) (listener net.Listener, err er
 }
 
 /*
- * Handler for /scan
- *
- * Virus checks file and sends response
+* Handler for /scan
+*
+* Virus checks file and sends response
  */
 func scanHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
@@ -316,19 +322,23 @@ func scanHandler(w http.ResponseWriter, req *http.Request) {
 
 	start := time.Now()
 	failed := false
+	virusesFound := 0
 
 	if ctx.ScanInterceptor.Handle(w, req, req.Body) {
-		failed = true
+		virusesFound = ctx.ScanInterceptor.VirusesFound
+		if virusesFound == 0 {
+			failed = true
+		}
 	}
 
 	duration := time.Since(start)
-	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount)
+	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount, virusesFound)
 }
 
 /*
- * Handler for scan & forward
- *
- * Constructs a forwarder and calls it
+* Handler for scan & forward
+*
+* Constructs a forwarder and calls it
  */
 func scanForwardHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
@@ -339,20 +349,36 @@ func scanForwardHandler(w http.ResponseWriter, req *http.Request) {
 
 	start := time.Now()
 	failed := false
+	virusesFound := 0
 
 	fw := forwarder.NewForwarder(ctx.ApplicationURL, ctx.Config.App.ContentMemoryThreshold, ctx.ScanInterceptor)
 	fw.SetLogger(ctx.Logger, ctx.Config.App.Debug)
-	fw.HandleRequest(w, req)
+
+	// Capture the response writer to detect if an error response is written
+	rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+	fw.HandleRequest(rec, req)
+
+	if ctx.ScanInterceptor.VirusesFound > 0 {
+		virusesFound = ctx.ScanInterceptor.VirusesFound
+	} else if rec.statusCode != ctx.Config.App.VirusStatusCode && rec.statusCode >= 400 {
+		failed = true
+	}
 
 	duration := time.Since(start)
-	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount)
+	metrics.UpdateMetrics(duration, failed, ctx.ScanInterceptor.FileCount, virusesFound)
+}
+
+// responseRecorder is a wrapper to capture the status code written to the ResponseWriter
+func (rec *responseRecorder) WriteHeader(code int) {
+	rec.statusCode = code
+	rec.ResponseWriter.WriteHeader(code)
 }
 
 /*
- * Handler for /info
- *
- * Validates the Scanner connection
- * Emits the information as a JSON response
+* Handler for /info
+*
+* Validates the Scanner connection
+* Emits the information as a JSON response
  */
 func infoHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {
@@ -375,7 +401,7 @@ func infoHandler(w http.ResponseWriter, req *http.Request) {
 			info.ScannerVersion = response
 		}
 		/*
-		 * Validate the Clamd response for a viral string
+		* Validate the Clamd response for a viral string
 		 */
 		reader := bytes.NewReader(EICAR)
 		if result, err := ctx.Scanner.Scan(reader); err != nil {
@@ -384,7 +410,7 @@ func infoHandler(w http.ResponseWriter, req *http.Request) {
 			info.TestScanVirusResult = result.String()
 		}
 		/*
-		 * Validate the Clamd response for a non-viral string
+		* Validate the Clamd response for a non-viral string
 		 */
 		reader = bytes.NewReader([]byte("foo bar mcgrew"))
 		if result, err := ctx.Scanner.Scan(reader); err != nil {
@@ -400,10 +426,10 @@ func infoHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 /*
- * Handler for /clammit/readyz
- *
- * Returns 200 OK unless we are shutting down. Used in k8s.
- * See https://github.com/ifad/clammit/issues/23
+* Handler for /clammit/readyz
+*
+* Returns 200 OK unless we are shutting down. Used in k8s.
+* See https://github.com/ifad/clammit/issues/23
  */
 func readyzHandler(w http.ResponseWriter, req *http.Request) {
 	if ctx.ShuttingDown {

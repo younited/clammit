@@ -15,6 +15,7 @@ type Metrics struct {
 	DurationOfVirusScanningMax     time.Duration `json:"duration_of_virus_scanning_max"`
 	FilesFailedToProcess           int           `json:"files_failed_to_process"`
 	TotalFilesScanned              int           `json:"total_files_scanned"`
+	TotalVirusesFound              int           `json:"total_viruses_found"`
 }
 
 var (
@@ -23,7 +24,7 @@ var (
 	durations []time.Duration
 )
 
-func UpdateMetrics(duration time.Duration, failed bool, fileCount int) {
+func UpdateMetrics(duration time.Duration, failed bool, fileCount int, virusesFound int) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -36,6 +37,7 @@ func UpdateMetrics(duration time.Duration, failed bool, fileCount int) {
 		}
 	}
 	metrics.TotalFilesScanned += fileCount
+	metrics.TotalVirusesFound += virusesFound
 
 	if failed {
 		metrics.FilesFailedToProcess++
