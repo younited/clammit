@@ -134,6 +134,7 @@ test-pages      = true
 max-file-size   = 25MB
 statsd-address  = localhost:8125
 statsd-namespace = clammit
+statsd-tags     = env:dev,region:us-east
 ```
 
 Setting                  | Description
@@ -150,6 +151,7 @@ debug                    | (Optional) If true, more things will be logged
 max-file-size            | (Optional) The maximum file size to scan. Files larger than this will not be scanned. Default 25MB
 statsd-address           | (Optional) The address of the StatsD server for metrics collection
 statsd-namespace         | (Optional) The namespace for StatsD metrics. Default is "clammit"
+statsd-tags              | (Optional) A comma-separated list of tags to include with each metric
 
 The listen address can be a TCP port or Unix socket, e.g.:
 
@@ -166,7 +168,7 @@ The `max-file-size` setting allows you to specify a maximum file size for scanni
 
 ## Metrics
 
-Clammit can send metrics to a StatsD server. To enable this, configure the `statsd-address` and `statsd-namespace` settings in the configuration file.
+Clammit can send metrics to a StatsD server. To enable this, configure the `statsd-address`, `statsd-namespace`, and `statsd-tags` settings in the configuration file.
 
 Metrics collected include:
 
