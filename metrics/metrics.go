@@ -68,7 +68,7 @@ func sendMetricsToDatadog(duration time.Duration, fileCount int, virusesFound in
 		log.Println("StatsD client not initialized, skipping metrics sending")
 		return
 	}
-	statsdClient.Histogram("scan.response_time", float64(duration/time.Millisecond), nil, 1)
+	statsdClient.Gauge("scan.response_time", float64(duration/time.Millisecond), nil, 1)
 	statsdClient.Count("scan.failed", int64(metrics.FilesFailedToProcess), nil, 1)
 	statsdClient.Count("scan.processed", int64(fileCount), nil, 1)
 	statsdClient.Count("scan.viruses_found", int64(virusesFound), nil, 1)

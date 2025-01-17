@@ -172,7 +172,7 @@ Clammit can send metrics to a StatsD server. To enable this, configure the `stat
 
 Metrics collected include:
 
-* `scan.response_time` - Histogram of the time taken to process each scan request
+* `scan.response_time` - Gauge of the time taken to process each scan request
 * `scan.failed` - Count of the number of failed scan requests
 * `scan.processed` - Count of the number of processed scan requests
 * `scan.viruses_found` - Count of the number of viruses found
