@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -68,7 +69,26 @@ func sendMetricsToDatadog(duration time.Duration, fileCount int, virusesFound in
 		log.Println("StatsD client not initialized, skipping metrics sending")
 		return
 	}
-	statsdClient.Histogram("scan.response_time", float64(duration/time.Millisecond), nil, 1)
+
+	durations = append(durations, duration)
+	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+	count := len(durations)
+	sum := 0.0
+	for _, d := range durations {
+		sum += float64(d / time.Millisecond)
+	}
+	avg := sum / float64(count)
+	median := float64(durations[count/2] / time.Millisecond)
+	max := float64(durations[count-1] / time.Millisecond)
+	p95 := float64(durations[int(float64(count)*0.95)] / time.Millisecond)
+
+	// Send custom metrics
+	statsdClient.Gauge("scan.response_time_avg", avg, nil, 1)
+	statsdClient.Gauge("scan.response_time_median", median, nil, 1)
+	statsdClient.Gauge("scan.response_time_max", max, nil, 1)
+	statsdClient.Gauge("scan.response_time_p95", p95, nil, 1)
+
+	// Send other metrics
 	statsdClient.Count("scan.failed", int64(metrics.FilesFailedToProcess), nil, 1)
 	statsdClient.Count("scan.processed", int64(fileCount), nil, 1)
 	statsdClient.Count("scan.viruses_found", int64(virusesFound), nil, 1)
